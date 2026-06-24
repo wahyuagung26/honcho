@@ -1,0 +1,118 @@
+# Honcho Docker Compose for Coolify
+#
+# All ${VARIABLE} entries appear as input fields in the Coolify UI.
+# Variables with defaults (:-value) are pre-filled; required fields
+# without defaults must be filled manually before deploy.
+#
+# Prerequisites:
+#   - LLM API key (OpenAI, Anthropic, or Gemini)
+#   - Server with >= 2 GB RAM
+#   - Docker & Docker Compose
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    environment:
+      - DB_CONNECTION_URI=${DB_CONNECTION_URI:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@database:5432/${POSTGRES_DB:-postgres}}
+      - CACHE_ENABLED=${CACHE_ENABLED:-true}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
+      - LLM_OPENAI_API_KEY=${LLM_OPENAI_API_KEY}
+      - LLM_ANTHROPIC_API_KEY=${LLM_ANTHROPIC_API_KEY:-}
+      - LLM_GEMINI_API_KEY=${LLM_GEMINI_API_KEY:-}
+      - AUTH_USE_AUTH=${AUTH_USE_AUTH:-true}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - NAMESPACE=${NAMESPACE:-honcho}
+      - VECTOR_STORE_TYPE=${VECTOR_STORE_TYPE:-pgvector}
+      - SENTRY_ENABLED=${SENTRY_ENABLED:-false}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+    restart: unless-stopped
+
+  deriver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    depends_on:
+      api:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DB_CONNECTION_URI=${DB_CONNECTION_URI:-postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@database:5432/${POSTGRES_DB:-postgres}}
+      - CACHE_ENABLED=${CACHE_ENABLED:-true}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
+      - LLM_OPENAI_API_KEY=${LLM_OPENAI_API_KEY}
+      - LLM_ANTHROPIC_API_KEY=${LLM_ANTHROPIC_API_KEY:-}
+      - LLM_GEMINI_API_KEY=${LLM_GEMINI_API_KEY:-}
+      - AUTH_USE_AUTH=${AUTH_USE_AUTH:-true}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - NAMESPACE=${NAMESPACE:-honcho}
+      - VECTOR_STORE_TYPE=${VECTOR_STORE_TYPE:-pgvector}
+      - SENTRY_ENABLED=${SENTRY_ENABLED:-false}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+    restart: unless-stopped
+
+  database:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-postgres}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.2
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redis-data:
